@@ -47,7 +47,7 @@ function render(){
  if(state.view==="home") homeEvents(); if(state.view==="new") newEvents(); if(state.view==="list") listEvents();
 }
 function nextStart(){return state.items.at(-1)?.hora_fin||""}
-function validTime(v){return /^([01]\\d|2[0-3]):[0-5]\\d$/.test(v||"")}
+function validTime(v){return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(v||""))}
 function body(){
   if(state.view==="home")return `<main><h2>Jornada de hoy</h2><div class="grid"><button class="big" id="new">＋ Nueva incidencia</button><button data-t="descanso">☕ Descanso</button><button data-t="cctv">📹 CCTV</button><button data-t="preventivo">🔧 PTD / Preventivo</button><button data-t="revision">🔍 Revisión</button><button id="list">📋 Ver parte (${state.items.length})</button></div><p class="status">Última hora fin: <b>${state.items.at(-1)?.hora_fin||"—"}</b></p><p class="muted">Las actividades rápidas también deben tener hora de fin; así la siguiente empieza automáticamente donde termina la anterior.</p></main>`;
 
