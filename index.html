@@ -25,8 +25,20 @@ const db=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const TECH="Rafael Delgado";
 const today=()=>{const d=new Date(),o=d.getTimezoneOffset();return new Date(d.getTime()-o*60000).toISOString().slice(0,10)};
 const time=()=>new Date().toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit",hour12:false});
-function parse(t=""){const equipo=t.match(/\b[A-Z0-9]+(?:-[A-Z0-9]+){2,}\b/i)?.[0]||"";const pcc=t.match(/\b\d{6}\b/)?.[0]||"";const d=t.match(/\b(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);const pref=equipo.split("-").find(x=>["CAA","DAB","PAR","PTD"].includes(x))||"";return{equipo,pcc,clase:pref==="CAA"?"Accesos":pref==="DAB"?"Billetaje":pref==="PAR"||pref==="PTD"?"Peaje":"",fecha:d?`${d[3]}-${d[2]}-${d[1]}`:"",hora:d?`${d[4].padStart(2,"0")}:${d[5]}`:""}}
-let state={session:null,jornada:null,items:[],view:"home",raw:"",fin:"",act:"",err:""};
+function parse(t=""){
+  const equipo=t.match(/\b[A-Z0-9]+-(?:CAA|DAB|PAR|PTD)-[A-Z0-9]+(?:-[A-Z0-9]+)?\b/i)?.[0]||"";
+  const pcc=t.match(/\b\d{6}\b/)?.[0]||"";
+  const d=t.match(/\b(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);
+  const pref=(equipo.match(/-(CAA|DAB|PAR|PTD)-/i)?.[1]||"").toUpperCase();
+  return {
+    equipo,
+    pcc,
+    clase:pref==="CAA"?"Accesos":pref==="DAB"?"Billetaje":pref==="PAR"||pref==="PTD"?"Peaje":"",
+    fecha:d?`${d[3]}-${d[2]}-${d[1]}`:"",
+    hora:d?`${d[4].padStart(2,"0")}:${d[5]}`:""
+  }
+}
+let state={session:null,jornada:null,items:[],view:"home",raw:"",inicio:"",fin:"",act:"",err:"",saving:false};
 const root=document.getElementById("root");
 function render(){
  if(!state.session){root.innerHTML=`<div class="login"><form id="login"><h1>Parte Técnico</h1><input id="email" type="email" placeholder="Correo" required><input id="pass" type="password" placeholder="Contraseña" required><button>Entrar</button>${state.err?`<div class="err">${state.err}</div>`:""}</form></div>`;document.getElementById("login").onsubmit=login;return}
@@ -34,17 +46,81 @@ function render(){
  document.getElementById("logout").onclick=()=>db.auth.signOut();
  if(state.view==="home") homeEvents(); if(state.view==="new") newEvents(); if(state.view==="list") listEvents();
 }
+function nextStart(){return state.items.at(-1)?.hora_fin||""}
+function validTime(v){return /^([01]\\d|2[0-3]):[0-5]\\d$/.test(v||"")}
 function body(){
- if(state.view==="home")return `<main><h2>Jornada de hoy</h2><div class="grid"><button class="big" id="new">＋ Nueva incidencia</button><button data-t="descanso">☕ Descanso</button><button data-t="cctv">📹 CCTV</button><button data-t="preventivo">🔧 PTD / Preventivo</button><button data-t="revision">🔍 Revisión</button><button id="list">📋 Ver parte (${state.items.length})</button></div><p class="status">Última hora fin: <b>${state.items.at(-1)?.hora_fin||"—"}</b></p></main>`;
- if(state.view==="new"){const z=parse(state.raw);return `<main><button class="back" id="back">← Volver</button><h2>Nueva incidencia</h2><label>Pega el aviso completo</label><textarea id="raw" placeholder="P01-CAA-101 sistema desconectado\nFecha: 05/08/2026 12:43:00\n137016">${state.raw}</textarea>${state.raw?`<div class="preview">${JSON.stringify(z,null,2)}</div>`:""}<label>Hora fin</label><input id="fin" type="time" value="${state.fin}"><label>Actuación realizada</label><textarea id="act">${state.act}</textarea><button class="save" id="save">✓ Guardar</button></main>`}
- return `<main><button class="back" id="back">← Volver</button><h2>Parte de hoy</h2>${state.items.map(x=>`<article><small>${x.hora_inicio||"—"} → ${x.hora_fin||"—"}</small><b>${x.equipo||x.tipo_registro}</b><span>${x.clase||""}${x.numero_pcc?" · PCC "+x.numero_pcc:""}</span><p>${x.actuacion||""}</p></article>`).join("")}</main>`;
+  if(state.view==="home")return `<main><h2>Jornada de hoy</h2><div class="grid"><button class="big" id="new">＋ Nueva incidencia</button><button data-t="descanso">☕ Descanso</button><button data-t="cctv">📹 CCTV</button><button data-t="preventivo">🔧 PTD / Preventivo</button><button data-t="revision">🔍 Revisión</button><button id="list">📋 Ver parte (${state.items.length})</button></div><p class="status">Última hora fin: <b>${state.items.at(-1)?.hora_fin||"—"}</b></p></main>`;
+
+  if(state.view==="new"){
+    const z=parse(state.raw), first=!state.items.length, autoStart=nextStart();
+    return `<main>
+      <button class="back" id="back">← Volver</button>
+      <h2>Nueva incidencia</h2>
+      ${first?`<label>Hora de inicio</label><input id="inicio" type="time" value="${state.inicio}">`:`<div class="status">Hora de inicio automática: <b>${autoStart||"Falta cerrar la línea anterior"}</b></div>`}
+      <label>Pega el aviso completo</label>
+      <textarea id="raw" placeholder="P01-CAA-101 sistema desconectado
+Fecha: 05/08/2026 12:43:00
+137016">${state.raw}</textarea>
+      ${state.raw?`<div class="preview"><b>Equipo:</b> ${z.equipo||"—"}<br><b>Clase:</b> ${z.clase||"—"}<br><b>PCC:</b> ${z.pcc||"—"}<br><b>Fecha aviso:</b> ${z.fecha||"—"}<br><b>Hora aviso:</b> ${z.hora||"—"}</div>`:""}
+      <label>Hora fin</label><input id="fin" type="time" value="${state.fin}">
+      <label>Actuación realizada</label><textarea id="act">${state.act}</textarea>
+      <button class="save" id="save" ${state.saving?"disabled":""}>${state.saving?"Guardando…":"✓ Guardar"}</button>
+    </main>`
+  }
+
+  return `<main><button class="back" id="back">← Volver</button><h2>Parte de hoy</h2>${state.items.map(x=>`<article><small>${x.hora_inicio||"—"} → ${x.hora_fin||"—"}</small><b>${x.equipo||x.tipo_registro}</b><span>${x.clase||""}${x.numero_pcc?" · PCC "+x.numero_pcc:""}</span><p>${x.actuacion||""}</p></article>`).join("")}</main>`;
 }
-async function login(e){e.preventDefault();state.err="";const{data,error}=await db.auth.signInWithPassword({email:email.value,password:pass.value});if(error)state.err=error.message;else state.session=data.session;await loadDay();render()}
+
+async function login(e){e.preventDefault();state.err="";const{data,error}=await db.auth.signInWithPassword({email:document.getElementById("email").value,password:document.getElementById("pass").value});if(error)state.err=error.message;else state.session=data.session;await loadDay();render()}
 async function loadDay(){const{data:t,error:te}=await db.from("tecnicos").select("id").eq("nombre",TECH).single();if(te){state.err=te.message;return}let{data:j,error}=await db.from("jornadas").select("*").eq("tecnico_id",t.id).eq("fecha",today()).maybeSingle();if(error){state.err=error.message;return}if(!j){const r=await db.from("jornadas").insert({tecnico_id:t.id,fecha:today()}).select().single();if(r.error){state.err=r.error.message;return}j=r.data}state.jornada=j;const q=await db.from("incidencias").select("*").eq("jornada_id",j.id).order("orden");state.items=q.data||[]}
-function homeEvents(){document.getElementById("new").onclick=()=>{state.view="new";state.raw="";state.fin="";state.act="";render()};document.getElementById("list").onclick=()=>{state.view="list";render()};document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>quick(b.dataset.t))}
-async function quick(tipo){const start=state.items.at(-1)?.hora_fin||time();const r=await db.from("incidencias").insert({jornada_id:state.jornada.id,tecnico_id:state.jornada.tecnico_id,hora_inicio:start,tipo_registro:tipo,actuacion:tipo==="descanso"?"Descanso":tipo==="cctv"?"CCTV":tipo==="preventivo"?"PTD / Preventivo":"Revisión",orden:state.items.length+1}).select().single();if(r.error)state.err=r.error.message;else{state.items.push(r.data);render()}}
-function newEvents(){document.getElementById("back").onclick=()=>{state.view="home";render()};document.getElementById("raw").oninput=e=>{state.raw=e.target.value;render()};document.getElementById("fin").oninput=e=>state.fin=e.target.value;document.getElementById("act").oninput=e=>state.act=e.target.value;document.getElementById("save").onclick=save}
-async function save(){const z=parse(state.raw);if(!state.fin){state.err="Indica la hora de fin.";render();return}const r=await db.from("incidencias").insert({jornada_id:state.jornada.id,tecnico_id:state.jornada.tecnico_id,hora_inicio:state.items.at(-1)?.hora_fin||time(),hora_fin:state.fin,equipo:z.equipo||null,numero_pcc:z.pcc||null,aviso_pcc:!!z.pcc,clase:z.clase||null,fecha_aviso:z.fecha||null,hora_aviso:z.hora||null,aviso_texto:state.raw||null,actuacion:state.act||null,tipo_registro:"incidencia",orden:state.items.length+1}).select().single();if(r.error)state.err=r.error.message;else{state.items.push(r.data);state.view="home";state.raw="";state.fin="";state.act="";render()}}
+function homeEvents(){
+  document.getElementById("new").onclick=()=>{
+    state.view="new";state.raw="";state.fin="";state.act="";state.saving=false;
+    state.inicio=state.items.length?nextStart():time();render()
+  };
+  document.getElementById("list").onclick=()=>{state.view="list";render()};
+  document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>quick(b.dataset.t))
+}
+async function quick(tipo){
+  if(window.quickSaving)return;
+  const start=nextStart();
+  if(!start){state.err="Para la primera línea usa «Nueva incidencia» e indica la hora de inicio.";render();return}
+  window.quickSaving=true;
+  const r=await db.from("incidencias").insert({
+    jornada_id:state.jornada.id,tecnico_id:state.jornada.tecnico_id,hora_inicio:start,
+    tipo_registro:tipo,
+    actuacion:tipo==="descanso"?"Descanso":tipo==="cctv"?"CCTV":tipo==="preventivo"?"PTD / Preventivo":"Revisión",
+    orden:state.items.length+1
+  }).select().single();
+  window.quickSaving=false;
+  if(r.error)state.err=r.error.message;else{state.items.push(r.data);render()}
+}
+function newEvents(){
+  document.getElementById("back").onclick=()=>{state.view="home";render()};
+  if(document.getElementById("inicio"))document.getElementById("inicio").oninput=e=>state.inicio=e.target.value;
+  document.getElementById("raw").oninput=e=>{state.raw=e.target.value;render()};
+  document.getElementById("fin").oninput=e=>state.fin=e.target.value;
+  document.getElementById("act").oninput=e=>state.act=e.target.value;
+  document.getElementById("save").onclick=save
+}
+async function save(){
+  if(state.saving)return;
+  const z=parse(state.raw), first=!state.items.length, inicio=first?state.inicio:nextStart();
+  if(!validTime(inicio)){state.err="Indica una hora de inicio válida.";render();return}
+  if(!state.fin||!validTime(state.fin)){state.err="Indica una hora de fin válida.";render();return}
+  if(!first&&!inicio){state.err="Primero debes cerrar la línea anterior con una hora de fin.";render();return}
+  state.saving=true;state.err="";render();
+  const r=await db.from("incidencias").insert({
+    jornada_id:state.jornada.id,tecnico_id:state.jornada.tecnico_id,
+    hora_inicio:inicio,hora_fin:state.fin,
+    equipo:z.equipo||null,numero_pcc:z.pcc||null,aviso_pcc:!!z.pcc,
+    clase:z.clase||null,fecha_aviso:z.fecha||null,hora_aviso:z.hora||null,
+    aviso_texto:state.raw||null,actuacion:state.act||null,
+    tipo_registro:"incidencia",orden:state.items.length+1
+  }).select().single();
+  if(r.error){state.saving=false;state.err=r.error.message;render()}
+  else{state.items.push(r.data);state.saving=false;state.view="home";state.raw="";state.fin="";state.act="";state.inicio=r.data.hora_fin;render()}
+}
 function listEvents(){document.getElementById("back").onclick=()=>{state.view="home";render()}}
 db.auth.getSession().then(async({data})=>{state.session=data.session;if(state.session)await loadDay();render()});db.auth.onAuthStateChange((_e,s)=>{state.session=s;render()});
 </script></body></html>
