@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0b1220">
 <title>Parte Técnico</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <style>
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f3f5f8;color:#111827}
 .app{max-width:760px;margin:auto;min-height:100vh}header{background:#0b1220;color:white;padding:16px 18px;display:flex;gap:10px;align-items:center;position:sticky;top:0;z-index:5}header b{font-size:18px}header span{font-size:12px;opacity:.7;flex:1}header button{background:transparent;color:white;border:0}
@@ -30,8 +31,13 @@ function parse(t=""){
   const pcc=t.match(/\b\d{6}\b/)?.[0]||"";
   const d=t.match(/\b(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);
   const pref=(equipo.match(/-(CAA|DAB|PAR|PTD)-/i)?.[1]||"").toUpperCase();
+  const firstLine=(t.split(/\r?\n/)[0]||"").trim();
+  const averia=firstLine.replace(new RegExp("^"+equipo.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\s*[-:]?\s*","i"),"").trim().replace(/\.$/,"");
+  const lugar=equipo?equipo.split("-")[0].toUpperCase():"";
   return {
     equipo,
+    lugar,
+    averia,
     pcc,
     clase:pref==="CAA"?"Accesos":pref==="DAB"?"Billetaje":pref==="PAR"||pref==="PTD"?"Peaje":"",
     fecha:d?`${d[3]}-${d[2]}-${d[1]}`:"",
@@ -49,7 +55,7 @@ function render(){
 function nextStart(){return state.items.at(-1)?.hora_fin||""}
 function validTime(v){return /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(String(v||""))}
 function body(){
-  if(state.view==="home")return `<main><h2>Jornada de hoy</h2><div class="grid"><button class="big" id="new">＋ Nueva incidencia</button><button data-t="descanso">☕ Descanso</button><button data-t="cctv">📹 CCTV</button><button data-t="preventivo">🔧 PTD / Preventivo</button><button data-t="revision">🔍 Revisión</button><button id="list">📋 Ver parte (${state.items.length})</button></div><p class="status">Última hora fin: <b>${state.items.at(-1)?.hora_fin||"—"}</b></p><p class="muted">Las actividades rápidas también deben tener hora de fin; así la siguiente empieza automáticamente donde termina la anterior.</p></main>`;
+  if(state.view==="home")return `<main><h2>Jornada de hoy</h2><div class="grid"><button class="big" id="new">＋ Nueva incidencia</button><button data-t="descanso">☕ Descanso</button><button data-t="cctv">📹 CCTV</button><button data-t="preventivo">🔧 PTD / Preventivo</button><button data-t="revision">🔍 Revisión</button><button id="list">📋 Ver parte (${state.items.length})</button><button id="excel">📊 Generar Excel</button></div><p class="status">Última hora fin: <b>${state.items.at(-1)?.hora_fin||"—"}</b></p><p class="muted">Las actividades rápidas también deben tener hora de fin; así la siguiente empieza automáticamente donde termina la anterior.</p></main>`;
 
   if(state.view==="new"){
     const z=parse(state.raw), first=!state.items.length, autoStart=nextStart(), titulo=state.tipo==="incidencia"?"Nueva incidencia":({"descanso":"Descanso","cctv":"CCTV","preventivo":"PTD / Preventivo","revision":"Revisión"}[state.tipo]||"Nueva actividad");
@@ -78,6 +84,7 @@ function homeEvents(){
     state.inicio=state.items.length?nextStart():time();render()
   };
   document.getElementById("list").onclick=()=>{state.view="list";render()};
+  document.getElementById("excel").onclick=exportExcel;
   document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>quick(b.dataset.t))
 }
 function quick(tipo){
@@ -112,6 +119,57 @@ async function save(){
   if(r.error){state.saving=false;state.err=r.error.message;render()}
   else{state.items.push(r.data);state.saving=false;state.view="home";state.raw="";state.fin="";state.act="";state.inicio=r.data.hora_fin;state.tipo="incidencia";render()}
 }
+async function exportExcel(){
+  if(!state.items.length){state.err="No hay líneas para generar el Excel.";render();return}
+  try{
+    const wb=new ExcelJS.Workbook();
+    const ws=wb.addWorksheet(String(new Date().getDate()));
+    ws.mergeCells("A1:E3"); ws.mergeCells("F1:M5"); ws.mergeCells("N1:O2"); ws.mergeCells("O3:O4"); ws.mergeCells("A4:E5");
+    ws.mergeCells("C6:D6"); ws.mergeCells("E6:F6"); ws.mergeCells("G6:H6");
+    ["A6:A7","B6:B7","I6:I7","J6:J7","K6:K7","L6:L7","M6:M7","N6:N7","O6:O7"].forEach(x=>ws.mergeCells(x));
+    ws.getCell("A4").value="INDRA-COMSA. METRO MALAGA.\n MANTENIMIENTO REDES Y CONTROL METRO MALAGA 2026";
+    ws.getCell("F1").value="PARTE DE TRABAJOS"; ws.getCell("N1").value="TÉCNICO"; ws.getCell("O1").value=TECH;
+    ws.getCell("N3").value="PERIODO"; ws.getCell("O3").value=new Date(today()+"T00:00:00"); ws.getCell("N5").value="REV."; ws.getCell("O5").value=0;
+    const headers=["AVISO PCC","GMAO","AVISO","","LLEGADA","","RESOLUCIÓN","","TÉCNICO","LUGAR","EQUIPO","AVERIA","OPERATIVO","CLASE","OBSERVACIONES"];
+    headers.forEach((v,i)=>ws.getCell(6,i+1).value=v);
+    ["Fecha","Hora","Fecha","Hora","Fecha","Hora"].forEach((v,i)=>ws.getCell(7,i+3).value=v);
+    const widths=[17.08,22.46,13.72,11.3,16.81,13.72,16.28,11.84,16.68,10.89,14.26,70.22,14.93,15.87,70.22];
+    widths.forEach((w,i)=>ws.getColumn(i+1).width=w);
+    ws.getRow(4).height=42;
+    ws.getRow(6).height=30; ws.getRow(7).height=24;
+    ws.eachRow(row=>row.eachCell(cell=>{cell.alignment={vertical:"center",wrapText:true};}));
+    ["A4","F1","N1","O1","N3","N5"].forEach(a=>{ws.getCell(a).font={bold:true};});
+    ws.getCell("O3").numFmt="dd/mm/yyyy";
+    const date=t=>t?new Date(t+"T00:00:00"):null;
+    const timeVal=t=>t?new Date("1899-12-30T"+(t.length===5?t+":00":t)):null;
+    state.items.forEach((x,idx)=>{
+      const r=8+idx, z=parse(x.aviso_texto||"");
+      const isInc=x.tipo_registro==="incidencia";
+      const lugar=z.lugar||((x.tipo_registro==="preventivo")?"PTD":"Varios");
+      const equipo=z.equipo||x.equipo||"";
+      const clase=x.clase|| (x.tipo_registro==="preventivo"?"Peaje":"");
+      const act=x.actuacion||x.tipo_registro||"";
+      ws.getCell(r,1).value=x.aviso_pcc?"Si":"";
+      ws.getCell(r,2).value=x.numero_pcc||"";
+      ws.getCell(r,3).value=date(x.fecha_aviso); ws.getCell(r,4).value=timeVal(x.hora_aviso);
+      ws.getCell(r,5).value=date(today()); ws.getCell(r,6).value=timeVal(x.hora_inicio);
+      ws.getCell(r,7).value=date(today()); ws.getCell(r,8).value=timeVal(x.hora_fin);
+      ws.getCell(r,9).value=TECH;
+      ws.getCell(r,10).value=lugar;
+      ws.getCell(r,11).value=equipo;
+      ws.getCell(r,12).value=isInc?(z.averia||""):act;
+      ws.getCell(r,13).value=isInc?"Sí":"";
+      ws.getCell(r,14).value=clase;
+      ws.getCell(r,15).value=isInc?act:act;
+      [3,5,7].forEach(c=>{if(ws.getCell(r,c).value)ws.getCell(r,c).numFmt="dd/mm/yyyy"});
+      [4,6,8].forEach(c=>{if(ws.getCell(r,c).value)ws.getCell(r,c).numFmt="hh:mm"});
+    });
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`202608 Parte de trabajo Rafael Delgado.xlsx`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  }catch(e){state.err="No se pudo generar el Excel: "+e.message;render()}
+}
+
 function listEvents(){
   document.getElementById("back").onclick=()=>{state.view="home";render()};
   document.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
