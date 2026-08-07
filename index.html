@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>Parte Técnico</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#f3f5f8;color:#111827}
+.app{max-width:760px;margin:auto;min-height:100vh}header{background:#0b1220;color:white;padding:16px 18px;display:flex;gap:10px;align-items:center;position:sticky;top:0;z-index:5}header b{font-size:18px}header span{font-size:12px;opacity:.7;flex:1}header button{background:transparent;color:white;border:0}
+main{padding:20px 18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.grid button{border:0;border-radius:16px;background:white;padding:18px;font-weight:700;min-height:90px}.grid .big{grid-column:1/-1;background:#111827;color:white}
+.status{background:white;padding:15px;border-radius:15px}.login{min-height:100vh;display:grid;place-items:center;background:#0b1220;padding:20px}.login form{background:white;padding:25px;border-radius:20px;width:min(420px,100%);display:grid;gap:12px}.login button,main>button.save{background:#111827;color:white;border:0;border-radius:12px;padding:14px;font-weight:700}
+input,textarea{border:1px solid #d6dbe3;border-radius:12px;padding:12px;width:100%;font:inherit}textarea{min-height:110px}label{display:block;font-weight:700;font-size:13px;margin:14px 0 6px}
+.back{border:0;background:transparent!important;padding:5px!important;font-weight:600}.err{background:#fee2e2;color:#991b1b;padding:10px;margin:10px 18px;border-radius:10px}
+.preview{white-space:pre-wrap;background:#e2e8f0;padding:10px;border-radius:10px;font-size:12px;margin-top:10px}
+article{background:white;border-radius:15px;padding:15px;margin:10px 0}article small,article span{display:block;color:#64748b}article b{display:block;margin:5px 0}
+</style>
+</head>
+<body><div id="root"></div>
+<script>
+const SUPABASE_URL="https://yqdcckvacavrttglswfd.supabase.co";
+const SUPABASE_KEY="sb_publishable_4DWFoA4onYF_F9WIkCJZJQ_KCBJOJBr";
+const db=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const TECH="Rafael Delgado";
+const today=()=>{const d=new Date(),o=d.getTimezoneOffset();return new Date(d.getTime()-o*60000).toISOString().slice(0,10)};
+const time=()=>new Date().toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit",hour12:false});
+function parse(t=""){const equipo=t.match(/\b[A-Z0-9]+(?:-[A-Z0-9]+){2,}\b/i)?.[0]||"";const pcc=t.match(/\b\d{6}\b/)?.[0]||"";const d=t.match(/\b(\d{2})\/(\d{2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);const pref=equipo.split("-").find(x=>["CAA","DAB","PAR","PTD"].includes(x))||"";return{equipo,pcc,clase:pref==="CAA"?"Accesos":pref==="DAB"?"Billetaje":pref==="PAR"||pref==="PTD"?"Peaje":"",fecha:d?`${d[3]}-${d[2]}-${d[1]}`:"",hora:d?`${d[4].padStart(2,"0")}:${d[5]}`:""}}
+let state={session:null,jornada:null,items:[],view:"home",raw:"",fin:"",act:"",err:""};
+const root=document.getElementById("root");
+function render(){
+ if(!state.session){root.innerHTML=`<div class="login"><form id="login"><h1>Parte Técnico</h1><input id="email" type="email" placeholder="Correo" required><input id="pass" type="password" placeholder="Contraseña" required><button>Entrar</button>${state.err?`<div class="err">${state.err}</div>`:""}</form></div>`;document.getElementById("login").onsubmit=login;return}
+ root.innerHTML=`<div class="app"><header><b>Parte Técnico</b><span>${today()} · ${TECH}</span><button id="logout">Salir</button></header>${state.err?`<div class="err">${state.err}</div>`:""}${body()}</div>`;
+ document.getElementById("logout").onclick=()=>db.auth.signOut();
+ if(state.view==="home") homeEvents(); if(state.view==="new") newEvents(); if(state.view==="list") listEvents();
+}
+function body(){
+ if(state.view==="home")return `<main><h2>Jornada de hoy</h2><div class="grid"><button class="big" id="new">＋ Nueva incidencia</button><button data-t="descanso">☕ Descanso</button><button data-t="cctv">📹 CCTV</button><button data-t="preventivo">🔧 PTD / Preventivo</button><button data-t="revision">🔍 Revisión</button><button id="list">📋 Ver parte (${state.items.length})</button></div><p class="status">Última hora fin: <b>${state.items.at(-1)?.hora_fin||"—"}</b></p></main>`;
+ if(state.view==="new"){const z=parse(state.raw);return `<main><button class="back" id="back">← Volver</button><h2>Nueva incidencia</h2><label>Pega el aviso completo</label><textarea id="raw" placeholder="P01-CAA-101 sistema desconectado\nFecha: 05/08/2026 12:43:00\n137016">${state.raw}</textarea>${state.raw?`<div class="preview">${JSON.stringify(z,null,2)}</div>`:""}<label>Hora fin</label><input id="fin" type="time" value="${state.fin}"><label>Actuación realizada</label><textarea id="act">${state.act}</textarea><button class="save" id="save">✓ Guardar</button></main>`}
+ return `<main><button class="back" id="back">← Volver</button><h2>Parte de hoy</h2>${state.items.map(x=>`<article><small>${x.hora_inicio||"—"} → ${x.hora_fin||"—"}</small><b>${x.equipo||x.tipo_registro}</b><span>${x.clase||""}${x.numero_pcc?" · PCC "+x.numero_pcc:""}</span><p>${x.actuacion||""}</p></article>`).join("")}</main>`;
+}
+async function login(e){e.preventDefault();state.err="";const{data,error}=await db.auth.signInWithPassword({email:email.value,password:pass.value});if(error)state.err=error.message;else state.session=data.session;await loadDay();render()}
+async function loadDay(){const{data:t,error:te}=await db.from("tecnicos").select("id").eq("nombre",TECH).single();if(te){state.err=te.message;return}let{data:j,error}=await db.from("jornadas").select("*").eq("tecnico_id",t.id).eq("fecha",today()).maybeSingle();if(error){state.err=error.message;return}if(!j){const r=await db.from("jornadas").insert({tecnico_id:t.id,fecha:today()}).select().single();if(r.error){state.err=r.error.message;return}j=r.data}state.jornada=j;const q=await db.from("incidencias").select("*").eq("jornada_id",j.id).order("orden");state.items=q.data||[]}
+function homeEvents(){document.getElementById("new").onclick=()=>{state.view="new";state.raw="";state.fin="";state.act="";render()};document.getElementById("list").onclick=()=>{state.view="list";render()};document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>quick(b.dataset.t))}
+async function quick(tipo){const start=state.items.at(-1)?.hora_fin||time();const r=await db.from("incidencias").insert({jornada_id:state.jornada.id,tecnico_id:state.jornada.tecnico_id,hora_inicio:start,tipo_registro:tipo,actuacion:tipo==="descanso"?"Descanso":tipo==="cctv"?"CCTV":tipo==="preventivo"?"PTD / Preventivo":"Revisión",orden:state.items.length+1}).select().single();if(r.error)state.err=r.error.message;else{state.items.push(r.data);render()}}
+function newEvents(){document.getElementById("back").onclick=()=>{state.view="home";render()};document.getElementById("raw").oninput=e=>{state.raw=e.target.value;render()};document.getElementById("fin").oninput=e=>state.fin=e.target.value;document.getElementById("act").oninput=e=>state.act=e.target.value;document.getElementById("save").onclick=save}
+async function save(){const z=parse(state.raw);if(!state.fin){state.err="Indica la hora de fin.";render();return}const r=await db.from("incidencias").insert({jornada_id:state.jornada.id,tecnico_id:state.jornada.tecnico_id,hora_inicio:state.items.at(-1)?.hora_fin||time(),hora_fin:state.fin,equipo:z.equipo||null,numero_pcc:z.pcc||null,aviso_pcc:!!z.pcc,clase:z.clase||null,fecha_aviso:z.fecha||null,hora_aviso:z.hora||null,aviso_texto:state.raw||null,actuacion:state.act||null,tipo_registro:"incidencia",orden:state.items.length+1}).select().single();if(r.error)state.err=r.error.message;else{state.items.push(r.data);state.view="home";state.raw="";state.fin="";state.act="";render()}}
+function listEvents(){document.getElementById("back").onclick=()=>{state.view="home";render()}}
+db.auth.getSession().then(async({data})=>{state.session=data.session;if(state.session)await loadDay();render()});db.auth.onAuthStateChange((_e,s)=>{state.session=s;render()});
+</script></body></html>
